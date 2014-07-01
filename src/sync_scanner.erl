@@ -48,7 +48,6 @@ start_link() ->
     gen_server:start_link({local, ?SERVER}, ?MODULE, [], []).
 
 rescan() ->
-    io:format("Scanning source files...~n"),
     gen_server:cast(?SERVER, discover_modules),
     gen_server:cast(?SERVER, discover_src_dirs),
     gen_server:cast(?SERVER, discover_src_files),
@@ -141,6 +140,7 @@ handle_cast(discover_src_dirs, State) ->
     %% Extract the compile / options / source / dir from each module.
     F = fun(X, Acc = {SrcAcc, HrlAcc}) ->
         %% Get the dir...
+        
         case sync_utils:get_src_dir_from_module(X) of
             {ok, SrcDir} ->
                 %% Get the options, store under the dir...
@@ -151,6 +151,8 @@ handle_cast(discover_src_dirs, State) ->
                 %% Return the dir...
                 {[SrcDir|SrcAcc], [HrlDir|HrlAcc]};
             undefined ->
+                Acc;
+            _Other ->
                 Acc
         end
     end,
@@ -169,7 +171,11 @@ handle_cast(discover_src_dirs, State) ->
 handle_cast(discover_src_files, State) ->
     %% For each source dir, get a list of source files...
     F = fun(X, Acc) ->
-        sync_utils:wildcard(X, ".*\.erl$") ++ sync_utils:wildcard(X, ".*\.dtl$") ++ Acc
+        sync_utils:wildcard(X, ".*\.erl$") ++ 
+        sync_utils:wildcard(X, ".*\.dtl$") ++ 
+        sync_utils:wildcard(X, ".*\.ex$")  ++ 
+        sync_utils:wildcard(X, ".*\.exs$") ++ 
+        Acc
     end,
     ErlFiles = lists:usort(lists:foldl(F, [], State#state.src_dirs)),
 
@@ -426,7 +432,7 @@ process_src_file_lastmod(undefined, _Other, _) ->
 
 
 erlydtl_compile(SrcFile, Options) ->
-    erlydtl:compile(SrcFile, list_to_atom(lists:flatten(filename:basename(SrcFile, ".dtl") ++ "_dtl")), Options).
+    erlydtl:compile(SrcFile, list_to_atom(filename:basename(SrcFile, ".dtl")), Options).
 
 maybe_recompile_src_file(File, LastMod, EnablePatching) ->
     Module = list_to_atom(filename:basename(File, ".erl")),
@@ -449,9 +455,23 @@ recompile_src_file(SrcFile, _EnablePatching) ->
     %% Get the module, src dir, and options...
     {ok, SrcDir} = sync_utils:get_src_dir(SrcFile),
 
-    {CompileFun, Module} = case sync_utils:is_erlydtl_template(SrcFile) of
-         false -> {fun compile:file/2, list_to_atom(filename:basename(SrcFile, ".erl"))};
-         true -> {fun erlydtl_compile/2, list_to_atom(lists:flatten(filename:basename(SrcFile, ".dtl") ++ "_dtl"))}
+    % {CompileFun, Module} = case sync_utils:is_erlydtl_template(SrcFile) of
+    %      false -> {fun compile:file/2, list_to_atom(filename:basename(SrcFile, ".erl"))};
+    %      true -> {fun erlydtl_compile/2, list_to_atom(lists:flatten(filename:basename(SrcFile, ".dtl") ++ "_dtl"))}
+    %  end,
+    io:format("recompiling ~p~n",[SrcFile]),
+
+    ElixirCompile = fun (ExSrc,_Options) ->
+                            ExSrcBin = list_to_binary(ExSrc),
+                            ModuleList = 'Elixir.Code':load_file(ExSrcBin),
+                            {ok,elixir_code}
+                    end,
+    
+    {CompileFun, Module} = case filename:extension(SrcFile) of
+         ".erl" -> {fun compile:file/2,     list_to_atom(filename:basename(SrcFile, ".erl"))};
+         ".dtl" -> {fun erlydtl_compile/2,  list_to_atom(lists:flatten(filename:basename(SrcFile, ".dtl") ++ "_dtl"))};
+         ".ex"  -> {ElixirCompile,          list_to_atom(filename:basename(SrcFile, ".ex"))};   
+          Ext   -> {fun compile:file/2,     list_to_atom(filename:basename(SrcFile, Ext))}
      end,
 
     %% Get the old binary code...
@@ -485,6 +505,8 @@ recompile_src_file(SrcFile, _EnablePatching) ->
                     %% Print the warnings...
                     print_results(Module, SrcFile, [], Warnings),
                     {ok, [], Warnings};
+                {ok, elixir_code} ->
+                    {ok, [], []};
 
                 {error, Errors, Warnings} ->
                     %% Compiling failed. Print the warnings and errors...

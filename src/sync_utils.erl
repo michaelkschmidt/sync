@@ -53,13 +53,10 @@ get_src_dir_from_module(Module)->
                     %% just bail.
                     _                   -> undefined
                 end,
-
+                
                 case Source2 of
                     undefined -> undefined;
-                    _ ->
-                        %% Get the source dir...
-                        Dir = filename:dirname(Source2),
-                        get_src_dir(Dir)
+                    _ -> get_src_dir(filename:dirname(Source2))
                 end
            catch _ : _ ->
                    undefined
@@ -140,12 +137,12 @@ find_include_dir_from_ancestors(_, _, "/") -> undefined;
 find_include_dir_from_ancestors(_, _, ".") -> undefined;
 find_include_dir_from_ancestors(_, _, "") -> undefined;
 find_include_dir_from_ancestors(Cwd, IncludeBase, Dir) ->
-    AttemptDir = filename:join(filename:dirname(Dir),IncludeBase),
+    AttemptDir = filename:join(dirname(Dir),IncludeBase),
     case filelib:is_dir(AttemptDir) of
         true ->
             {ok, AttemptDir};
         false ->
-            find_include_dir_from_ancestors(Cwd, IncludeBase, filename:dirname(Dir))
+            find_include_dir_from_ancestors(Cwd, IncludeBase, dirname(Dir))
     end.
     
 normalize_case_windows_dir(Dir) ->
@@ -194,14 +191,21 @@ is_path_decendent(Path) ->
     lists:sublist(Path, length(Cwd)) == Cwd.
 
 %% @private Find the src directory for the specified Directory
+get_src_dir("/") ->
+    undefined;
 get_src_dir(Dir) ->
     HasCode =
         filelib:wildcard("*.erl", Dir) /= [] orelse
+        filelib:wildcard("*.ex",  Dir) /= [] orelse
+        filelib:wildcard("*.exs", Dir) /= [] orelse
         filelib:wildcard("*.dtl", Dir) /= [] orelse
         filelib:wildcard("*.hrl", Dir) /= [],
     if
-        HasCode -> {ok,Dir};
-        true -> get_src_dir(filename:dirname(Dir))
+        HasCode -> 
+            {ok,Dir};
+        true -> 
+            get_src_dir(dirname(Dir))
+            
     end.
 
 %% @private Return all files in a directory matching a regex.
@@ -302,3 +306,11 @@ get_system_modules() ->
         end
     end,
     lists:flatten([F(X) || X <- Apps]).
+
+%% This is a workaround for windows where it will
+%% repeatedly return the drive letter
+dirname(Path) ->
+    case filename:dirname(Path) of
+        Path -> "/";  % Translate the drive to "/" to break the recursion as if it was on Unix
+        DirName -> DirName
+    end.
